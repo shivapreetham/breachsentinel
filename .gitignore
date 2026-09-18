@@ -2,6 +2,8 @@ venv/
 __pycache__/
 *.pyc
 api/data.db
+api/data_secure.db
 logs/access.log
+logs/access_secure.log
 alerts/alerts.jsonl
 alerts/blocklist.json

