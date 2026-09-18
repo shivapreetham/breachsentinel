@@ -120,6 +120,29 @@ class DetectorTestCase(unittest.TestCase):
         self.feed(ip="5.5.5.5", event="search", query_param="roadmap or notes", ts=1)
         self.assertEqual(self.rules_fired(), [])
 
+    # --- Recon / scanning ---------------------------------------------------
+
+    def test_few_404s_do_not_flag(self):
+        for i in range(4):
+            self.feed(ip="9.9.9.9", event="get_document", status=404, ts=i)
+        self.assertEqual(self.rules_fired(), [])
+
+    def test_many_404s_flag_as_recon_scanning(self):
+        for i in range(5):
+            self.feed(ip="9.9.9.9", event="get_document", status=404, ts=i)
+        self.assertIn("RECON_SCANNING", self.rules_fired())
+
+    def test_404s_outside_window_do_not_accumulate(self):
+        for i in range(4):
+            self.feed(ip="9.9.9.9", event="get_document", status=404, ts=i)
+        self.feed(ip="9.9.9.9", event="get_document", status=404, ts=100)
+        self.assertEqual(self.rules_fired(), [])
+
+    def test_successful_lookups_do_not_count_as_404s(self):
+        for i in range(10):
+            self.feed(ip="9.9.9.9", event="get_document", status=200, ts=i)
+        self.assertEqual(self.rules_fired(), [])
+
     # --- Auto-block response ---------------------------------------------------
 
     def test_ip_auto_blocked_after_two_high_alerts(self):

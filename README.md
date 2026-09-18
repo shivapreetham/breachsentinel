@@ -50,6 +50,7 @@ synthetic sample.
 | `LOGIN_BRUTE_FORCE` | 4+ failed logins for the same (IP, username) within 10s | MEDIUM, escalates to HIGH if a login then succeeds |
 | `IDOR_ENUMERATION` | A caller's token is used to access 2+ tenants it doesn't belong to within 15s | HIGH |
 | `SQLI_ATTEMPT` | A query parameter matches known SQL injection signatures (`' OR '1'='1`, `UNION SELECT`, `DROP TABLE`, SQL comment terminators) | HIGH |
+| `RECON_SCANNING` | 5+ `404` responses from the same IP within 15s (ID/endpoint guessing, with or without a valid token) | MEDIUM |
 
 After 2 HIGH-severity alerts from the same source IP, that IP is written
 to `alerts/blocklist.json`; the API checks this file on every request and

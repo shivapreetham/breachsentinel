@@ -9,6 +9,7 @@ Rules:
   LOGIN_BRUTE_FORCE     - many failed logins for one (ip, username) in a short window.
   IDOR_ENUMERATION      - one caller's token accessed several tenants it does not own.
   SQLI_ATTEMPT          - a query parameter matches known SQL injection signatures.
+  RECON_SCANNING        - many 404s from one IP in a short window (ID/endpoint guessing).
 
 On repeated HIGH severity alerts from the same IP, the source IP is written
 to alerts/blocklist.json, which the API checks on every request — a small,
@@ -31,6 +32,8 @@ LOGIN_FAILURE_WINDOW = 10       # seconds
 LOGIN_FAILURE_THRESHOLD = 4     # failed attempts
 IDOR_WINDOW = 15                # seconds
 IDOR_DISTINCT_TENANT_THRESHOLD = 2  # foreign tenants touched
+SCAN_WINDOW = 15                # seconds
+SCAN_404_THRESHOLD = 5          # 404s from one IP before it's called scanning
 AUTO_BLOCK_HIGH_ALERT_THRESHOLD = 2  # HIGH alerts from one IP before auto-block
 
 SQLI_SIGNATURES = [
@@ -46,6 +49,7 @@ class Detector:
     def __init__(self):
         self.login_failures = defaultdict(deque)   # (ip, username) -> deque[ts]
         self.tenant_access = defaultdict(deque)     # (ip, username) -> deque[(ts, path_tenant)]
+        self.not_found_hits = defaultdict(deque)    # ip -> deque[ts]
         self.high_alerts_by_ip = defaultdict(int)
         self.blocked_ips = self._load_blocklist()
         self.alerts = []
@@ -160,6 +164,19 @@ class Detector:
                     f"suspicious query parameter on /search: {q!r}",
                     {"query_param": q}, ts,
                 )
+
+        if event.get("status") == 404:
+            dq = self.not_found_hits[ip]
+            dq.append(ts)
+            while dq and ts - dq[0] > SCAN_WINDOW:
+                dq.popleft()
+            if len(dq) >= SCAN_404_THRESHOLD:
+                self._emit(
+                    "RECON_SCANNING", "MEDIUM", ip,
+                    f"{len(dq)} not-found responses in {SCAN_WINDOW}s (endpoint/ID enumeration)",
+                    {"count": len(dq)}, ts,
+                )
+                dq.clear()
 
     def summary(self):
         by_severity = defaultdict(int)
