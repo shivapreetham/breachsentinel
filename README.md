@@ -53,46 +53,20 @@ synthetic sample.
 | `RECON_SCANNING` | 5+ `404` responses from the same IP within 15s (ID/endpoint guessing, with or without a valid token) | MEDIUM |
 
 After 2 HIGH-severity alerts from the same source IP, that IP is written
-to `alerts/blocklist.json`; the API checks this file on every request and
-rejects blocked IPs with `403` — a minimal example of automated response,
-not just alerting.
+to `alerts/blocklist.json`. Both `api/app.py` and `api/app_secure.py`
+check this file on every request and reject blocked IPs with `403` — a
+minimal example of automated response, not just alerting, and a shared
+control-plane store that protects a service even if it was never
+attacked directly. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Remediation (`api/app_secure.py`)
 
 Every vulnerability above has a fix in the hardened counterpart, on the
-same routes so it's a direct before/after comparison:
-
-| # | Fix | How |
-|---|---|---|
-| 1 | JWT `alg: none` | `jwt.decode()` always passes a fixed `algorithms=["HS256"]` allowlist — it never branches on the token's own header, so PyJWT rejects anything else |
-| 2 | Weak signing secret | Read from `JWT_SECRET` env var, falling back to a random 32-byte secret per run — never a hardcoded guessable string |
-| 2b | Plaintext passwords (found while hardening — not in the original vuln list) | Stored as salted hashes via Werkzeug's `generate_password_hash`/`check_password_hash` |
-| 3 | No rate limiting on `/login` | In-memory sliding-window limiter, `429` after 5 attempts per (IP, username) in 10s |
-| 4 | BOLA/IDOR | Every tenant-scoped route checks `token.tenant_id == path.tenant_id` (or `role == "admin"`) before returning data |
-| 5 | SQL injection | `/search` uses a parameterized query instead of string-formatting the input |
-
-Run `python demo_secure.py` to see all four attacks fail against this
-version. Note the attack toolkit itself needed a small correctness fix
-alongside this: `attack.py idor` originally reported *every* `200`
-response as a hit, including the caller's own tenant, which made a
-correctly-secured API look vulnerable in the demo output. It now decodes
-the caller's own `tenant_id` from the token and only calls it IDOR when a
-*foreign* tenant is actually readable.
-
-## How this maps to production/AWS controls
-
-None of this project runs on AWS — it's intentionally local-only — but
-each piece is a hand-built version of a control a real deployment would
-buy rather than build:
-
-| This project | Production equivalent |
-|---|---|
-| `is_blocked()` / `blocklist.json` IP check | AWS WAF IP sets, or Shield for volumetric abuse |
-| `detector.py` rule engine | GuardDuty findings / Sigma rules over a SIEM (mentioned below as the natural next step) |
-| `logs/access.log` (JSONL) | CloudTrail + CloudWatch Logs |
-| `JWT_SECRET` env var fallback | AWS Secrets Manager or KMS-backed Parameter Store |
-| Per-tenant `role`/`tenant_id` check | IAM policy conditions / least-privilege resource policies |
-| In-memory login rate limiter | API Gateway throttling or WAF rate-based rules |
+same routes so it's a direct before/after comparison. Run
+`python demo_secure.py` to see every attack fail against it. See
+[docs/REMEDIATION.md](docs/REMEDIATION.md) for the full fix table and how
+each control maps to a production/AWS equivalent (WAF, GuardDuty, IAM,
+Secrets Manager, etc.).
 
 ## Tests
 
@@ -136,9 +110,31 @@ python attacks/attack.py jwt-crack --token <a captured JWT> --wordlist attacks/w
 python detector/detector.py --follow
 ```
 
-See [THREAT_MODEL.md](THREAT_MODEL.md) for a STRIDE pass over the system
-- what each vulnerability actually threatens, what the hardened API fixes,
-and what residual risk remains even after fixing it.
+### With Docker
+
+`api`, `api-secure`, and `detector` also run as three separate containers
+coordinating through a bind-mounted `logs/`/`alerts/` — the same shape as
+independently deployed services sharing a control-plane store instead of
+calling each other directly. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+for the full picture.
+
+```bash
+docker compose up --build
+
+# from the host, in another terminal - same toolkit, just a different port
+python attacks/attack.py --url http://localhost:5000 jwt-none      # succeeds
+python attacks/attack.py --url http://localhost:5001 jwt-none      # fails (hardened)
+docker compose logs -f detector                                    # watch it get flagged
+```
+
+After enough HIGH alerts, the detector blocks the attacking IP in the
+shared `alerts/blocklist.json` - at which point *both* `api` and
+`api-secure` reject it, even though only `api` was ever attacked
+directly.
+
+See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for a STRIDE pass over
+the system - what each vulnerability actually threatens, what the
+hardened API fixes, and what residual risk remains even after fixing it.
 
 ## Design notes and limitations
 
