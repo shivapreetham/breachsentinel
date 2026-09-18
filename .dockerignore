@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+.github/
+logs/
+alerts/
+api/data.db
+api/data_secure.db
+tests/

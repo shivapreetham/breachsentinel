@@ -201,6 +201,13 @@ def run_batch(path):
 
 def run_follow(path):
     detector = Detector()
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        # Don't require the API to have logged at least one event before the
+        # detector can start - the two are independently deployed services
+        # and shouldn't have a startup-order dependency on each other.
+        path.touch()
     print(f"[*] Tailing {path} - waiting for new events (Ctrl+C to stop) ...")
     with open(path, encoding="utf-8") as f:
         f.seek(0, 2)

@@ -5,7 +5,10 @@ real server or making network calls.
 
 Run with: python -m unittest discover tests
 """
+import json
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,6 +25,17 @@ class AppSecureTestCase(unittest.TestCase):
         app_secure._login_attempts.clear()
         self.client = app_secure.app.test_client()
 
+        # Isolate from the real alerts/blocklist.json (which the vulnerable
+        # API and detector share) so these tests neither depend on nor
+        # pollute it.
+        self.tmp_dir = Path(tempfile.mkdtemp())
+        self._orig_blocklist_path = app_secure.BLOCKLIST_PATH
+        app_secure.BLOCKLIST_PATH = self.tmp_dir / "blocklist.json"
+
+    def tearDown(self):
+        app_secure.BLOCKLIST_PATH = self._orig_blocklist_path
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
     def login(self, username, password):
         return self.client.post("/login", json={"username": username, "password": password})
 
@@ -32,6 +46,22 @@ class AppSecureTestCase(unittest.TestCase):
 
     def test_health(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+
+    # --- shared blocklist (defense in depth alongside the detector) ---------------------------------------------------
+
+    def test_blocked_ip_rejected_even_with_valid_credentials(self):
+        app_secure.BLOCKLIST_PATH.write_text(
+            json.dumps({"blocked_ips": {"127.0.0.1": {"reason": "test"}}}), encoding="utf-8"
+        )
+        resp = self.login("alice", "password123")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_unblocked_ip_not_affected_by_others_block(self):
+        app_secure.BLOCKLIST_PATH.write_text(
+            json.dumps({"blocked_ips": {"9.9.9.9": {"reason": "test"}}}), encoding="utf-8"
+        )
+        resp = self.login("alice", "password123")
+        self.assertEqual(resp.status_code, 200)
 
     def test_login_with_correct_password_returns_token(self):
         resp = self.login("alice", "password123")

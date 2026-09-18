@@ -1,0 +1,55 @@
+# Three independently deployable services, coordinating through shared
+# state on disk (logs/ and alerts/) rather than direct calls to each other -
+# the same shape as a real deployment where a detection service watches
+# traffic for several backends and a shared blocklist/control-plane store
+# protects all of them, not just the one that got attacked first.
+#
+#   api         - the deliberately vulnerable target, port 5000
+#   api-secure  - the hardened counterpart, port 5001, checks the same
+#                 blocklist the detector writes to (defense in depth)
+#   detector    - tails api's log continuously and writes alerts/blocklist
+#
+# Usage:
+#   docker compose up --build            # all three
+#   docker compose up --build api        # just the vulnerable target
+#   docker compose logs -f detector       # watch alerts as they happen
+#
+# Attack it from the host with the existing toolkit, e.g.:
+#   python attacks/attack.py --url http://localhost:5000 jwt-none
+#   python attacks/attack.py --url http://localhost:5001 jwt-none   # should fail
+
+services:
+  api:
+    build: .
+    command: python api/app.py
+    environment:
+      HOST: 0.0.0.0
+      PORT: 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+      - ./alerts:/app/alerts
+
+  api-secure:
+    build: .
+    command: python api/app_secure.py
+    environment:
+      HOST: 0.0.0.0
+      PORT: 5001
+      # Set a real JWT_SECRET here to persist sessions across container
+      # restarts; left unset, a fresh random secret is generated each run.
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./logs:/app/logs
+      - ./alerts:/app/alerts
+
+  detector:
+    build: .
+    command: python detector/detector.py --follow
+    volumes:
+      - ./logs:/app/logs
+      - ./alerts:/app/alerts
+    depends_on:
+      - api

@@ -25,7 +25,16 @@ Fixes, one per vulnerability in app.py:
                           admin role is exempted explicitly, not by default).
   6. SQL injection      -> /search uses a parameterized query instead of
                           string-formatting user input into SQL.
+
+It also honors alerts/blocklist.json - the same file detector/detector.py
+writes to when watching the *vulnerable* API. That's deliberate: in a real
+deployment, a shared detector/control-plane blocking a malicious source
+protects every service behind it, not just the one that got attacked
+first. See docker-compose.yml, which runs this API, the vulnerable one,
+and the detector as three independently deployable services coordinating
+through that shared file - not a single monolith.
 """
+import json
 import os
 import secrets as secrets_module
 import sqlite3
@@ -40,6 +49,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "api" / "data_secure.db"
 LOG_PATH = BASE_DIR / "logs" / "access_secure.log"
+BLOCKLIST_PATH = BASE_DIR / "alerts" / "blocklist.json"
 
 SECRET = os.environ.get("JWT_SECRET") or secrets_module.token_hex(32)
 if not os.environ.get("JWT_SECRET"):
@@ -100,6 +110,22 @@ def _rate_limited(ip, username):
     while dq and now - dq[0] > LOGIN_ATTEMPT_WINDOW:
         dq.popleft()
     return len(dq) > LOGIN_ATTEMPT_LIMIT
+
+
+def is_blocked(ip):
+    if not BLOCKLIST_PATH.exists():
+        return False
+    try:
+        data = json.loads(BLOCKLIST_PATH.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError:
+        return False
+    return ip in data.get("blocked_ips", {})
+
+
+@app.before_request
+def block_known_bad_ips():
+    if is_blocked(request.remote_addr):
+        return jsonify({"error": "blocked"}), 403
 
 
 @app.after_request
@@ -210,4 +236,6 @@ def search():
 
 if __name__ == "__main__":
     init_db()
-    app.run(host="127.0.0.1", port=5001)
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "5001"))
+    app.run(host=host, port=port)
