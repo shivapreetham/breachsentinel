@@ -136,6 +136,10 @@ python attacks/attack.py jwt-crack --token <a captured JWT> --wordlist attacks/w
 python detector/detector.py --follow
 ```
 
+See [THREAT_MODEL.md](THREAT_MODEL.md) for a STRIDE pass over the system
+- what each vulnerability actually threatens, what the hardened API fixes,
+and what residual risk remains even after fixing it.
+
 ## Design notes and limitations
 
 - Detection here is intentionally rule-based and explainable rather than
